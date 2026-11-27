@@ -1,0 +1,63 @@
+{
+  "name": "pi-cowboy-exp-herdr-app",
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@12.9.1",
+  "description": "Herdr Desktop (herdr-core) multiplexer plugin for pi-cowboy",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-cowboy",
+    "pi-cowboy-plugin",
+    "herdr",
+    "herdr-core",
+    "ai",
+    "agents"
+  ],
+  "license": "MIT",
+  "author": "electric-dragon-80000v",
+  "engines": {
+    "node": ">=24.20.0",
+    "pnpm": ">=12"
+  },
+  "files": [
+    "index.ts",
+    "plugin.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "pi-cowboy": {
+    "plugin": "./plugin.js"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "build": "esbuild src/plugin.ts --bundle --platform=node --format=esm --target=node24 --outfile=plugin.js --packages=external",
+    "typecheck": "tsc6 --noEmit",
+    "lint": "oxlint src test index.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "syntax:check": "pnpm run typecheck && pnpm run build",
+    "commitlint": "commitlint",
+    "dev:install": "pnpm run build && pi install ."
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
+    "@commitlint/types": "^21.2.3",
+    "@earendil-works/pi-coding-agent": "^1.6.1",
+    "@types/node": "^26.6.4",
+    "esbuild": "^0.28.2",
+    "husky": "^9.1.7",
+    "oxlint": "1.90.0",
+    "pi-cowboy": "^0.41.1",
+    "prettier": "^3.9.9",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vitest": "^5.0.3"
+  }
+}

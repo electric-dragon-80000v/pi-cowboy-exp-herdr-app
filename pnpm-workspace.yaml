@@ -1,0 +1,9 @@
+# pi-cowboy publishes often; a release younger than the machine-wide
+# minimumReleaseAge is the version this plugin is developed against, not a
+# supply-chain anomaly.
+minimumReleaseAgeExclude:
+  - pi-cowboy
+
+allowBuilds:
+  esbuild: true
+  protobufjs: true

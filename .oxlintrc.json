@@ -1,0 +1,11 @@
+{
+  "plugins": ["import", "unicorn", "typescript"],
+  "categories": { "correctness": "error" },
+  "env": { "node": true, "es2022": true },
+  "rules": {
+    "no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+    "no-useless-assignment": "error",
+    "import/export": "error"
+  },
+  "ignorePatterns": ["plugin.js"]
+}

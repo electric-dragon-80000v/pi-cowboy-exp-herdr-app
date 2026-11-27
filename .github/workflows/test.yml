@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Format, Types & Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The commit-message check below diffs against the base branch, so the
+          # branch it diffs from has to be in the local history.
+          fetch-depth: 0
+
+      - name: Set up pnpm and Node.js 24.20.0
+        uses: pnpm/setup@v3
+        with:
+          runtime: node@24.20.0
+          cache: true # the pnpm store, keyed on pnpm-lock.yaml's content hash
+          # pnpm and Node only; installing is the explicit step below.
+          install: false
+
+      - name: Install dependencies
+        run: HUSKY=0 pnpm install --frozen-lockfile
+
+      # The commit-msg hook only guards commits made where husky is installed,
+      # and `git commit --no-verify` bypasses it. The flags are passed without a
+      # `--` separator: pnpm forwards that separator verbatim, and commitlint
+      # reads it as end-of-options.
+      - name: Check commit messages
+        if: github.event_name == 'pull_request'
+        run: pnpm run commitlint --from "origin/${{ github.event.pull_request.base.ref }}" --to HEAD
+
+      - name: Check formatting
+        run: pnpm run format:check
+
+      - name: Check types
+        run: pnpm run typecheck
+
+      - name: Build the plugin artifact
+        run: pnpm run build
+
+      - name: Run unit tests
+        run: pnpm test

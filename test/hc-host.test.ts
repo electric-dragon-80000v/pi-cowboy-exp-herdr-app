@@ -10,7 +10,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentHostRef, ViewRequest } from "pi-cowboy/plugin";
-import { createHcRuntime, hcTerminalName } from "../src/hc-host.js";
+import {
+  createHcRuntime,
+  hcTerminalName,
+  placementShellArgv,
+} from "../src/hc-host.js";
 import { FakeHc, type FakeTerminal } from "./helpers/hc-fake.js";
 
 const { removeGitWorktreeMock } = vi.hoisted(() => ({
@@ -21,7 +25,7 @@ vi.mock("../src/git-worktree.js", () => ({
   removeGitWorktree: removeGitWorktreeMock,
 }));
 
-const FAST = { pollIntervalMs: 1, killSettleMs: 20 };
+const FAST = { pollIntervalMs: 1, killSettleMs: 20, startRetryDelayMs: 1 };
 
 let hc: FakeHc;
 let scratch: string;
@@ -94,6 +98,20 @@ describe("hcTerminalName", () => {
   });
 });
 
+describe("placementShellArgv", () => {
+  it("names the account's shell as a login shell", () => {
+    expect(placementShellArgv({ SHELL: "/bin/zsh" })).toEqual([
+      "/bin/zsh",
+      "-l",
+    ]);
+  });
+
+  it("leaves the shell to hc when the environment names none", () => {
+    expect(placementShellArgv({})).toBeUndefined();
+    expect(placementShellArgv({ SHELL: "" })).toBeUndefined();
+  });
+});
+
 describe("hc host.hostAt", () => {
   it("files the terminal under this process's own terminal, without hc's exit notes", async () => {
     const ref = await runtime().host.hostAt(checkoutRequest());
@@ -102,13 +120,13 @@ describe("hc host.hostAt", () => {
     expect(run).toEqual(
       expect.arrayContaining(["--bg", "--no-notify", "--parent", "t100"]),
     );
-    expect(run!.slice(run!.indexOf("--"))).toEqual([
-      "--",
-      "bash",
-      "--noprofile",
-      "--norc",
-      "-i",
-    ]);
+    // The account's own login shell, named so `hc get` shows it, and no rc flags.
+    const shell = placementShellArgv(process.env);
+    if (shell === undefined) {
+      expect(run).not.toContain("--");
+    } else {
+      expect(run!.slice(run!.indexOf("--"))).toEqual(["--", ...shell]);
+    }
     const terminal = hc.terminals.get(ref.paneId)!;
     expect(terminal.parent).toBe("t100");
     expect(terminal.notify).toBe(false);
@@ -237,6 +255,29 @@ describe("hc host.start", () => {
     expect(hc.terminals.get(ref.paneId)!.sent).toEqual([
       `'pi' 'it'\\''s $(here)'`,
     ]);
+  });
+
+  it("waits for the shell to come back in front before typing the launch", async () => {
+    const rt = runtime();
+    const ref = await rt.host.hostAt(checkoutRequest());
+    const terminal = hc.terminals.get(ref.paneId)!;
+    // What a launch finds when `prepare`'s proof or the pane's own startup is
+    // still finishing: a program in front that is gone a moment later.
+    terminal.foregroundPid = terminal.pid + 1;
+    terminal.foregroundName = "grep";
+    setTimeout(() => {
+      terminal.foregroundPid = terminal.pid;
+      terminal.foregroundName = "bash";
+    }, 5);
+
+    await expect(
+      rt.host.start(ref, {
+        name: ref.name,
+        piArgs: [],
+        agentMultiplexerKind: "pi",
+      }),
+    ).resolves.toBeUndefined();
+    expect(terminal.sent).toEqual(["'pi'"]);
   });
 
   it("refuses to type into a placement a program already holds", async () => {

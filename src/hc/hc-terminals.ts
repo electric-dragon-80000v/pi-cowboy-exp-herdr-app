@@ -151,7 +151,8 @@ export interface HcRunRequest {
   /** The terminal it is filed under — always explicit, never hc's own default. */
   readonly parent: string;
   readonly labels: Readonly<Record<string, string>>;
-  readonly argv: readonly string[];
+  /** The program to run. Absent starts the machine's own shell, as a Herdr Desktop terminal does. */
+  readonly argv?: readonly string[];
 }
 
 /** Commands against hc's terminals. Throws HcError unless a method says otherwise. */
@@ -177,8 +178,9 @@ export class HcTerminals {
       "--parent",
       request.parent,
       ...labels,
-      "--",
-      ...request.argv,
+      ...(request.argv === undefined || request.argv.length === 0
+        ? []
+        : ["--", ...request.argv]),
     ]);
     const address = str(record(result)?.address);
     if (address === undefined) {

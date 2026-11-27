@@ -9,9 +9,10 @@
  * `HC_TERMINAL_ID` as its parent. Nothing else decides where a child is filed:
  * two chats in one repository each get their own children.
  *
- * A placement runs an interactive bash the harness types its launcher into,
- * exactly as it would into a herdr pane; the agent's status comes from its own
- * OSC 7501 reports (pi sends them), read back through `hc get`.
+ * A placement runs the account's own login shell, the one a Herdr Desktop
+ * terminal opens, and the harness types its launcher into it, exactly as it
+ * would into a herdr pane; the agent's status comes from its own OSC 7501
+ * reports (pi sends them), read back through `hc get`.
  *
  * Built once per parent session by the plugin factory.
  */
@@ -69,16 +70,26 @@ const CHECKOUT_LABEL = "cowboy.checkout";
 const REPO_LABEL = "cowboy.repo";
 
 /**
- * The shell a placement runs. Harness launchers are POSIX shell functions read
- * back with `typeset -f`, so the shell is fixed rather than the user's own (hc
- * otherwise starts the account's shell, which may be fish or nu). No rc files:
- * the core's login environment already carries PATH, and a user's rc must not
- * decide what a launch types into.
+ * The shell a placement runs: the account's own shell, from the environment
+ * rather than a program this plugin picks, as a login shell so the user's rc
+ * applies. Naming it keeps the placement's shell visible in `hc get`. The
+ * shell is the one a launcher types into, so it must be the shell the user
+ * works in. Undefined when the environment names none: hc then starts the
+ * machine's own shell, as it does for a Desktop terminal.
  */
-const PLACEMENT_SHELL = ["bash", "--noprofile", "--norc", "-i"] as const;
+export function placementShellArgv(
+  env: Readonly<Record<string, string | undefined>>,
+): readonly string[] | undefined {
+  const shell = env.SHELL;
+  return shell === undefined || shell === "" ? undefined : [shell, "-l"];
+}
 
 /** How long `start` watches for the agent to take the foreground before handing over (ms). */
 const START_READY_TIMEOUT_MS = 15_000;
+/** Attempts at typing a launch while the placement's shell is not in front yet. */
+const START_ATTEMPTS = 8;
+/** Delay before the next launch attempt, multiplied by the attempt (ms). */
+const START_RETRY_DELAY_MS = 150;
 /** Default budget for `waitUntilGone` (ms). */
 const GONE_TIMEOUT_MS = 15_000;
 /** Budget for a killed terminal to report finished before it is removed (ms). */
@@ -91,6 +102,10 @@ export interface HcRuntimeOptions {
   readonly pollIntervalMs?: number;
   /** How long a killed terminal has to finish before a close gives up. */
   readonly killSettleMs?: number;
+  /** How many times a start waits for the placement's shell before refusing. */
+  readonly startAttempts?: number;
+  /** Delay before the next start attempt, multiplied by the attempt. */
+  readonly startRetryDelayMs?: number;
 }
 
 type LiveTerminal = Extract<HcTerminal, { state: "live" }>;
@@ -186,6 +201,8 @@ class HcRuntimeCore {
   readonly terminals: HcTerminals;
   readonly pollIntervalMs: number;
   readonly killSettleMs: number;
+  readonly startAttempts: number;
+  readonly startRetryDelayMs: number;
 
   constructor(
     readonly pi: PiSession,
@@ -194,6 +211,8 @@ class HcRuntimeCore {
     this.terminals = new HcTerminals(new HcTransport(pi));
     this.pollIntervalMs = options.pollIntervalMs ?? 250;
     this.killSettleMs = options.killSettleMs ?? KILL_SETTLE_TIMEOUT_MS;
+    this.startAttempts = options.startAttempts ?? START_ATTEMPTS;
+    this.startRetryDelayMs = options.startRetryDelayMs ?? START_RETRY_DELAY_MS;
   }
 
   /** Poll until `probe` answers, or undefined once `timeoutMs` has passed. */
@@ -331,6 +350,7 @@ function createHcHost(core: HcRuntimeCore): AgentHost {
       // the terminal's hc name is only a free spot derived from it.
       const identity = request.name ?? request.label;
       const base = hcTerminalName(identity);
+      const shell = placementShellArgv(process.env);
       for (const name of spotNames(base)) {
         let address: string;
         try {
@@ -348,7 +368,7 @@ function createHcHost(core: HcRuntimeCore): AgentHost {
                     [REPO_LABEL]: request.checkout.repoCwd,
                   }),
             },
-            argv: PLACEMENT_SHELL,
+            ...(shell === undefined ? {} : { argv: shell }),
           });
         } catch (err) {
           // hc keeps names unique among live terminals, so a taken name is
@@ -379,18 +399,29 @@ function createHcHost(core: HcRuntimeCore): AgentHost {
     },
 
     start: async (ref, options) => {
-      const terminal = await core.liveTerminal(ref.paneId);
-      if (terminal === undefined || !owns(terminal, ref)) {
-        throw new HcError(
-          `cannot start ${options.name}: terminal ${ref.paneId} is not this agent's placement any more`,
-          "not_found",
-        );
-      }
-      if (!shellInForeground(terminal)) {
-        throw new HcError(
-          `cannot start ${options.name}: terminal ${ref.paneId} is already running ${terminal.foreground?.name ?? "a program"}`,
-          undefined,
-        );
+      // A placement's shell is not always in front when the launch arrives:
+      // `prepare` types a proof into the pane, and a shell coming up forks for
+      // its own startup. herdr answers this by refusing a start into a pane
+      // that is not an available shell and letting pi-cowboy retry that as
+      // transient; hc has no start of its own, so the same wait is here.
+      let busy: LiveTerminal | undefined;
+      for (let attempt = 1; ; attempt++) {
+        const terminal = await core.liveTerminal(ref.paneId);
+        if (terminal === undefined || !owns(terminal, ref)) {
+          throw new HcError(
+            `cannot start ${options.name}: terminal ${ref.paneId} is not this agent's placement any more`,
+            "not_found",
+          );
+        }
+        if (shellInForeground(terminal)) break;
+        busy = terminal;
+        if (attempt >= core.startAttempts) {
+          throw new HcError(
+            `cannot start ${options.name}: terminal ${ref.paneId} is already running ${busy.foreground?.name ?? "a program"}`,
+            undefined,
+          );
+        }
+        await sleep(attempt * core.startRetryDelayMs);
       }
       // The kind is the command typed into the placement's shell, so a
       // harness's launcher function (installed by `prepare` under that name)

@@ -28,7 +28,7 @@ Only one multiplexer drives a session, and herdr always wins. Pi-cowboy asks its
 ## Behavior
 
 - **Parentage.** Each subagent is started with `hc run --bg --no-notify --parent $HC_TERMINAL_ID`, where the id is the spawning process's own terminal. Herdr Desktop shows the child beneath that chat, so two chats in one repository keep separate child trees. Parentage is never inferred from the repository, branch, names or the selected tab. Placement fails with a clear error when there is no `HC_TERMINAL_ID`.
-- **Launch.** The terminal runs `bash --noprofile --norc -i` in the spawn's worktree, and the harness's kind is typed into it, as for herdr panes. Worktree creation, harness selection and readiness go through pi-cowboy's normal spawn path.
+- **Launch.** The terminal runs the account's own login shell — `$SHELL -l`, the shell a Herdr Desktop terminal opens, with no rc-narrowing flags — in the spawn's worktree, and the harness's kind is typed into it, as for herdr panes. Worktree creation, harness selection and readiness go through pi-cowboy's normal spawn path.
 - **Labels.** `cowboy=1`, `cowboy.agent=<branch>`, `cowboy.checkout`, `cowboy.repo`. Ownership requires both the terminal address and the agent label to match.
 - **Status.** Read from the agent's OSC 7501 reports via `hc get`. A harness that reports nothing reads as `unknown`.
 - **Steering.** Refused while the shell is in front, while the agent reports no status (an approval dialog cannot be ruled out), and while it reports `blocked`. Sends for `idle` and `working` are guarded by `hc send --if`.
@@ -42,6 +42,7 @@ Only one multiplexer drives a session, and herdr always wins. Pi-cowboy asks its
 - **Steering needs OSC 7501 status.** Pi 1.6.0 reports it. Claude Code, Codex and OpenCode do not unless configured to, so steering them is refused rather than guessed.
 - **Start budget.** `start` waits up to 15 s for the agent to take the foreground. A harness that takes longer can be observed as already exited.
 - **Cleanup order.** Release kills the terminal before removing the worktree. If git then fails to remove the worktree, it is no longer discoverable through `hc` labels, though `git worktree list` still shows it.
+- **The placement shell is the machine's own.** Pi-cowboy's launchers are POSIX shell functions read back with `typeset -f`, so a shell that is not bash- or zsh-like (fish, nu) cannot take them. The built-in herdr multiplexer has the same constraint; neither chooses a shell for the user.
 - **Sibling detection** counts only cowboy-labelled terminals, by their launch cwd.
 
 ## Development
